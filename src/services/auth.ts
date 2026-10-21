@@ -16,12 +16,7 @@ export const WEB_CLIENT_ID =
   firebaseConfig.oAuthClientId ||
   '849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com';
 
-export const SCOPES = [
-  'profile',
-  'email',
-  'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive.appdata',
-];
+export const SCOPES = ['profile', 'email'];
 
 export const DRIVE_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
@@ -35,8 +30,6 @@ export const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 provider.addScope('profile');
 provider.addScope('email');
-provider.addScope('https://www.googleapis.com/auth/drive.file');
-provider.addScope('https://www.googleapis.com/auth/drive.appdata');
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
@@ -54,7 +47,8 @@ export const ensureGoogleAuthInitialized = async (): Promise<void> => {
     });
     googleAuthInitialized = true;
   } catch (err) {
-    // Non-fatal warning if on web without GSI script
+    // Android initialization failures must not be silently ignored.
+    if (Capacitor.isNativePlatform()) throw err;
     console.warn('GoogleAuth.initialize status:', err);
   }
 };
@@ -106,27 +100,95 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       try {
         nativeUser = await GoogleAuth.signIn();
       } catch (nativeErr: unknown) {
-        const errMessage = nativeErr instanceof Error ? nativeErr.message : String(nativeErr);
         console.error('Native GoogleAuth.signIn error:', nativeErr);
 
-        // Handle user cancellation gracefully
+        // Thoroughly extract all possible status codes from Capacitor / Android Play Services
+        const anyErr = nativeErr as Record<string, unknown> | null | undefined;
+        let extractedCode = '';
+        if (anyErr?.code !== undefined && anyErr?.code !== null) {
+          extractedCode = String(anyErr.code).trim();
+        } else if (anyErr?.statusCode !== undefined && anyErr?.statusCode !== null) {
+          extractedCode = String(anyErr.statusCode).trim();
+        } else if (anyErr?.error !== undefined && anyErr?.error !== null) {
+          extractedCode = String(anyErr.error).trim();
+        } else if (anyErr?.status !== undefined && anyErr?.status !== null) {
+          extractedCode = String(anyErr.status).trim();
+        }
+
+        const rawMsg =
+          nativeErr instanceof Error
+            ? nativeErr.message
+            : typeof nativeErr === 'string'
+              ? nativeErr
+              : String(anyErr?.message || '');
+
+        let fullDump = rawMsg;
+        try {
+          const serialized = JSON.stringify(nativeErr);
+          if (serialized && serialized !== '{}') {
+            fullDump = `${rawMsg} ${serialized}`;
+          }
+        } catch {}
+
+        // 1. Handle user cancellation (Code 12501 or cancellation text)
         if (
-          errMessage.toLowerCase().includes('cancel') ||
-          errMessage.includes('12501') ||
-          errMessage.toLowerCase().includes('closed')
+          extractedCode === '12501' ||
+          rawMsg.toLowerCase().includes('cancel') ||
+          rawMsg.includes('12501') ||
+          rawMsg.toLowerCase().includes('closed')
         ) {
           console.log('Google Sign-In was cancelled by user.');
           return null;
         }
 
-        // Handle Developer Error (Code 10 or 12500)
-        if (errMessage.includes('10') || errMessage.includes('DEVELOPER_ERROR') || errMessage.includes('12500')) {
+        // 2. Handle Developer Error (Code 10: CommonStatusCodes.DEVELOPER_ERROR)
+        // Usually occurs when:
+        // - google-services.json is missing or doesn't match com.tubewellkhata.app
+        // - APK signing SHA-1 is not added to Firebase Android app
+        // - serverClientId doesn't match the Web Client ID
+        const isCode10 =
+          extractedCode === '10' ||
+          extractedCode.toLowerCase().includes('developer_error') ||
+          rawMsg.includes('10') ||
+          rawMsg.toLowerCase().includes('developer_error');
+
+        if (isCode10) {
           throw new Error(
-            'Google Sign-In configuration error (Developer Error 10). Please verify in Firebase Console: (1) Package name "com.tubewellkhata.app" is registered, (2) SHA-1 fingerprint 55:76:F0:19:51:9D:C6:2D:43:50:97:96:D0:A4:6A:A7:00:39:A7:F9 is added under Android apps, and (3) Google Sign-in provider is enabled under Authentication.'
+            'Google Sign-In failed (Code 10: DEVELOPER_ERROR). Required steps: (1) Ensure your downloaded google-services.json is placed at android/app/google-services.json, (2) Verify package "com.tubewellkhata.app" and SHA-1 fingerprint 55:76:F0:19:51:9D:C6:2D:43:50:97:96:D0:A4:6A:A7:00:39:A7:F9 are registered in Firebase Console, and (3) Web Client ID matches 849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com.'
           );
         }
 
-        throw new Error(`Google Sign-In failed: ${errMessage}`);
+        // 3. Handle Generic Sign-In Failed (Code 12500)
+        const isCode12500 =
+          extractedCode === '12500' ||
+          rawMsg.includes('12500');
+
+        if (isCode12500) {
+          throw new Error(
+            'Google Sign-In failed (Code 12500: SIGN_IN_FAILED). Please verify google-services.json is inside android/app/, your Google account is added to OAuth Test Users in Google Cloud Console, and Google Play Services is updated on your device.'
+          );
+        }
+
+        // 4. Handle Network Error (Code 7)
+        const isCode7 =
+          extractedCode === '7' ||
+          rawMsg.toLowerCase().includes('network');
+
+        if (isCode7) {
+          throw new Error(
+            'Google Sign-In failed (Code 7: NETWORK_ERROR). Please check your internet connection on your phone and try again.'
+          );
+        }
+
+        // 5. If message is generic "Something went wrong.", give specific actionable guidance with code
+        if (rawMsg.includes('Something went wrong') || rawMsg.trim() === '') {
+          throw new Error(
+            `Native Google Sign-In failed: ${rawMsg || 'Unknown native error'}${extractedCode ? ` (Code: ${extractedCode})` : ' (No error code provided by plugin)'}. Check the APK signing SHA-1 against Firebase, Android OAuth client, and Google Play Services logs.`
+          );
+        }
+
+        const displayCode = extractedCode ? ` (Code: ${extractedCode})` : '';
+        throw new Error(`Google Sign-In failed${displayCode}: ${rawMsg}`);
       }
 
       if (!nativeUser) {
@@ -142,8 +204,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
         );
       }
 
-      const effectiveToken = accessToken || idToken;
-      setCachedAccessToken(effectiveToken);
+      // ID tokens are not Google Drive access tokens.
+      const effectiveToken = accessToken || '';
+      if (accessToken) setCachedAccessToken(accessToken);
 
       // Authenticate with Firebase Authentication using the Google ID Token
       const credential = GoogleAuthProvider.credential(idToken);
@@ -167,7 +230,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
           );
         }
 
-        throw new Error(`Firebase Authentication failed: ${fbMsg}`);
+        throw new Error(`Firebase Authentication failed (Code: ${fbCode || 'unknown'}): ${fbMsg}`);
       }
 
       const fbUser = userCredential.user;
@@ -217,9 +280,14 @@ export const requestDriveToken = async (): Promise<string> => {
 
   if (Capacitor.isNativePlatform()) {
     try {
-      await ensureGoogleAuthInitialized();
+      await GoogleAuth.initialize({
+        clientId: WEB_CLIENT_ID,
+        scopes: [...SCOPES, ...DRIVE_SCOPES],
+        grantOfflineAccess: true,
+      });
+      googleAuthInitialized = true;
       const res = await GoogleAuth.signIn();
-      const token = res.authentication?.accessToken || res.authentication?.idToken;
+      const token = res.authentication?.accessToken;
       if (token) {
         setCachedAccessToken(token);
         return token;

@@ -35,8 +35,6 @@ const config: CapacitorConfig = {
       scopes: [
         'profile',
         'email',
-        'https://www.googleapis.com/auth/drive.appdata',
-        'https://www.googleapis.com/auth/drive.file',
       ],
       serverClientId: '849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com',
       forceCodeForRefreshToken: true,

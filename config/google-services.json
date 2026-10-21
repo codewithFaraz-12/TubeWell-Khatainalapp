@@ -1,0 +1,63 @@
+{
+  "project_info": {
+    "project_number": "849806943027",
+    "project_id": "gen-lang-client-0211199320",
+    "storage_bucket": "gen-lang-client-0211199320.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:849806943027:android:f3a349371a9fcf03159446",
+        "android_client_info": {
+          "package_name": "com.tubewellkhata.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "849806943027-e62ea55e2unhh2bqpaa4ble7jfrmbul8.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.tubewellkhata.app",
+            "certificate_hash": "5576f019519dc62d43509796d0a46aa70039a7f9"
+          }
+        },
+        {
+          "client_id": "849806943027-fdngr6gfi6qvgqctctnsoq6kt84170ni.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.tubewellkhata.app",
+            "certificate_hash": "ce815d34b23f4a230e9f9b402c1fb10b9cee6720"
+          }
+        },
+        {
+          "client_id": "849806943027-nrvsvd9jvno6fviu7n17knkl1klvsjpi.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.tubewellkhata.app",
+            "certificate_hash": "25711186b917087530117dfbf24a8a1e3a7202e0"
+          }
+        },
+        {
+          "client_id": "849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBe-Jty6VboDyZUHmMXigdTK2CjetyN4iE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

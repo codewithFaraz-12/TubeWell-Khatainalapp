@@ -7,109 +7,125 @@ on:
 
 jobs:
   build-android:
-    name: Build Android APK
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
     steps:
-      - name: Checkout Source Code
+      - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Setup Node.js Environment
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
+          node-version: '22'
 
-      - name: Install Dependencies
-        run: |
-          npm ci || npm install
-          npm install --save-dev @capacitor/core @capacitor/cli @capacitor/android @codetrix-studio/capacitor-google-auth
-
-      - name: Build Web Application
-        run: npm run build
-
-      - name: Setup Java JDK
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: temurin
           java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@v3
 
-      - name: Configure Keystore & Signing
-        id: keystore
+      - name: Install project dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build web application
+        run: npm run build
+
+      - name: Prepare Capacitor Android
+        run: |
+          if [ ! -f android/gradlew ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Install and validate real Firebase Android config
+        run: |
+          test -f config/google-services.json || { echo 'Missing config/google-services.json'; exit 1; }
+          mkdir -p android/app
+          cp config/google-services.json android/app/google-services.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const j = JSON.parse(fs.readFileSync('android/app/google-services.json','utf8'));
+          if (j.project_info?.project_id !== 'gen-lang-client-0211199320') throw Error('Wrong Firebase project');
+          const c = j.client?.find(x => x.client_info?.android_client_info?.package_name === 'com.tubewellkhata.app');
+          if (!c) throw Error('Wrong Android package in google-services.json');
+          if (!c.oauth_client?.some(x => x.client_type === 1)) throw Error('Missing Android OAuth client: register signing SHA-1 in Firebase and download fresh JSON');
+          if (!c.oauth_client?.some(x => x.client_type === 3)) throw Error('Missing Web OAuth client');
+          console.log('Firebase Android JSON structure verified.');
+          NODE
+
+      - name: Configure Google Services Gradle plugin
+        run: |
+          python3 - <<'PYGRADLE'
+          from pathlib import Path
+          root=Path('android/build.gradle')
+          app=Path('android/app/build.gradle')
+          s=root.read_text()
+          if 'com.google.gms:google-services:' not in s:
+              needle='dependencies {'
+              if needle not in s:
+                  raise SystemExit('Missing buildscript dependencies in android/build.gradle')
+              s=s.replace(needle, "dependencies {\n        classpath 'com.google.gms:google-services:4.4.2'",1)
+              root.write_text(s)
+          s=app.read_text()
+          if "apply plugin: 'com.google.gms.google-services'" not in s:
+              app.write_text(s+"\napply plugin: 'com.google.gms.google-services'\n")
+          PYGRADLE
+
+      - name: Configure native Google OAuth server client ID
+        run: |
+          python3 - <<'PYXML'
+          from pathlib import Path
+          import re, json
+          cfg=json.loads(Path('firebase-applet-config.json').read_text())
+          client=cfg['oAuthClientId']
+          f=Path('android/app/src/main/res/values/strings.xml')
+          s=f.read_text()
+          entry=f'<string name="server_client_id">{client}</string>'
+          if 'name="server_client_id"' in s:
+              s=re.sub(r'<string name="server_client_id">[^<]*</string>',entry,s)
+          else:
+              s=s.replace('</resources>',f'    {entry}\n</resources>')
+          f.write_text(s)
+          PYXML
+
+      - name: Use persistent development signing key and show fingerprint
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo 'Missing ANDROID_KEYSTORE_BASE64 secret'; exit 1; }
           mkdir -p ~/.android
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "Using secure signing keystore from GitHub Secrets (ANDROID_KEYSTORE_BASE64)."
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
-          elif [ -f "android/keystore/tubewell-debug.keystore" ]; then
-            echo "Using persistent repository keystore (android/keystore/tubewell-debug.keystore)."
-            cp android/keystore/tubewell-debug.keystore ~/.android/debug.keystore
-          else
-            echo "No ANDROID_KEYSTORE_BASE64 secret provided. Generating development debug keystore..."
-            keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=TubeWell Khata,OU=Agriculture,O=TubeWell Khata,C=PK"
-          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+          chmod 600 ~/.android/debug.keystore
+          echo 'APK signing key SHA fingerprints (must be registered in Firebase):'
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android | grep -E 'SHA1:|SHA256:'
+          python3 - <<'PYSHA'
+          import json,subprocess,re
+          j=json.load(open('config/google-services.json'))
+          clients=j['client'][0]['oauth_client']
+          known={x.get('android_info',{}).get('certificate_hash','').lower() for x in clients if x['client_type']==1}
+          out=subprocess.check_output(['keytool','-list','-v','-keystore',str(__import__('pathlib').Path.home()/'.android/debug.keystore'),'-storepass','android','-alias','androiddebugkey','-keypass','android'],text=True)
+          sha=re.search(r'SHA1:\s*([A-F0-9:]+)',out)
+          if not sha: raise SystemExit('Cannot determine signing SHA-1')
+          fp=sha.group(1).replace(':','').lower()
+          if fp not in known:
+              raise SystemExit('ERROR: Signing SHA-1 is not registered in bundled google-services.json. Build stopped.')
+          else:
+              print('Bundled Android OAuth certificate matches APK signing SHA-1.')
+          PYSHA
 
-          echo "================================================================="
-          echo ">>> SIGNING FINGERPRINTS (ADD TO FIREBASE CONSOLE > YOUR APPS > ANDROID) <<<"
-          keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1:|SHA256:"
-          echo "================================================================="
-
-      - name: Initialize & Sync Capacitor Android Project
+      - name: Build debug APK
+        working-directory: android
         run: |
-          npx cap add android || true
-          npx cap sync android
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug --stacktrace
 
-      - name: Configure Android GoogleAuth Strings & MainActivity
-        run: |
-          # 1. Extract and inject server_client_id into strings.xml for native Google Sign-In
-          WEB_CLIENT_ID=$(node -p "require('./firebase-applet-config.json').oAuthClientId || '849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com'")
-          echo "Configuring Android server_client_id: $WEB_CLIENT_ID"
-
-          STRINGS_FILE="android/app/src/main/res/values/strings.xml"
-          if [ -f "$STRINGS_FILE" ]; then
-            if grep -q "server_client_id" "$STRINGS_FILE"; then
-              sed -i "s#<string name=\"server_client_id\">.*</string>#<string name=\"server_client_id\">$WEB_CLIENT_ID</string>#" "$STRINGS_FILE"
-            else
-              sed -i "s#</resources>#    <string name=\"server_client_id\">$WEB_CLIENT_ID</string>\n</resources>#" "$STRINGS_FILE"
-            fi
-            echo "Updated server_client_id in $STRINGS_FILE"
-          fi
-
-          # 2. Register GoogleAuth plugin in MainActivity.java
-          MAIN_ACTIVITY="android/app/src/main/java/com/tubewellkhata/app/MainActivity.java"
-          if [ -f "$MAIN_ACTIVITY" ]; then
-            cat << 'EOF' > "$MAIN_ACTIVITY"
-          package com.tubewellkhata.app;
-
-          import android.os.Bundle;
-          import com.getcapacitor.BridgeActivity;
-          import com.codetrixstudio.capacitor.GoogleAuth.GoogleAuth;
-
-          public class MainActivity extends BridgeActivity {
-              @Override
-              public void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  registerPlugin(GoogleAuth.class);
-              }
-          }
-          EOF
-            echo "Updated MainActivity.java with GoogleAuth plugin registration"
-          fi
-
-      - name: Build Android Debug APK
-        working-directory: ./android
-        run: |
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
-
-      - name: Upload Debug APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TubeWellKhata-Debug-APK
+          name: TubeWell-Khata-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 14
+          if-no-files-found: error
+          retention-days: 30
