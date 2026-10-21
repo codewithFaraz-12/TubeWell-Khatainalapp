@@ -1,0 +1,88 @@
+{
+  "entities": {
+    "customer": {
+      "title": "Customer",
+      "description": "A farmer or irrigation customer in the user's private TubeWell Khata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique customer ID" },
+        "name": { "type": "string", "description": "Customer name" },
+        "phone": { "type": "string", "description": "Phone number" },
+        "village": { "type": "string", "description": "Village or address" },
+        "hourlyRate": { "type": "number", "description": "Water billing rate per hour (600)" },
+        "notes": { "type": "string", "description": "Additional notes" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      },
+      "required": ["id", "name", "hourlyRate", "createdAt", "updatedAt"]
+    },
+    "waterRecord": {
+      "title": "WaterRecord",
+      "description": "An irrigation watering session record in the user's private TubeWell Khata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique water record ID" },
+        "customerId": { "type": "string", "description": "Associated customer ID" },
+        "startDate": { "type": "string", "description": "Date of watering YYYY-MM-DD" },
+        "startTime": { "type": "object", "description": "12-hour start time" },
+        "endTime": { "type": "object", "description": "12-hour end time" },
+        "endsNextDay": { "type": "boolean", "description": "Overnight watering indicator" },
+        "durationMinutes": { "type": "number", "description": "Billable duration in minutes" },
+        "rawDurationMinutes": { "type": "number", "description": "Pre-adjustment duration" },
+        "gobMinutes": { "type": "number", "description": "GOB adjustment minutes" },
+        "gobType": { "type": "string", "description": "add or minus" },
+        "amount": { "type": "number", "description": "Total charge (durationMinutes * 10)" },
+        "notes": { "type": "string", "description": "Notes" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      },
+      "required": ["id", "customerId", "startDate", "durationMinutes", "amount", "createdAt", "updatedAt"]
+    },
+    "paymentRecord": {
+      "title": "PaymentRecord",
+      "description": "A payment received from a customer in the user's private TubeWell Khata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique payment record ID" },
+        "customerId": { "type": "string", "description": "Associated customer ID" },
+        "amount": { "type": "number", "description": "Payment amount in PKR" },
+        "date": { "type": "string", "description": "Payment date YYYY-MM-DD" },
+        "note": { "type": "string", "description": "Payment notes" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      },
+      "required": ["id", "customerId", "amount", "date", "createdAt", "updatedAt"]
+    },
+    "userSettings": {
+      "title": "UserSettings",
+      "description": "User business profile and preferences.",
+      "type": "object",
+      "properties": {
+        "tubeWellName": { "type": "string", "description": "Business tube-well name" },
+        "ownerName": { "type": "string", "description": "Owner name" },
+        "ownerPhone": { "type": "string", "description": "Owner phone" },
+        "hourlyRate": { "type": "number", "description": "Hourly rate" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      },
+      "required": ["tubeWellName"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/customers/{customerId}": {
+      "schema": "customer",
+      "description": "User's private customer records. Isolated by Firebase UID."
+    },
+    "/users/{userId}/water_records/{recordId}": {
+      "schema": "waterRecord",
+      "description": "User's private water records. Isolated by Firebase UID."
+    },
+    "/users/{userId}/payments/{paymentId}": {
+      "schema": "paymentRecord",
+      "description": "User's private payment records. Isolated by Firebase UID."
+    },
+    "/users/{userId}/settings/profile": {
+      "schema": "userSettings",
+      "description": "User's private tube-well profile and preferences."
+    }
+  }
+}

@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Default deny for all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Test connection probe check
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // Completely private per-user data isolation: ONE GOOGLE ACCOUNT = ONE PRIVATE TUBEWELL KHATA
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      match /customers/{customerId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /water_records/{recordId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /payments/{paymentId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /settings/{docId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /{allSubcollections=**} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+  }
+}

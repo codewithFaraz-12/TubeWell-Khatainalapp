@@ -1,0 +1,115 @@
+name: Build TubeWell Khata Android APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: |
+          npm ci || npm install
+          npm install --save-dev @capacitor/core @capacitor/cli @capacitor/android @codetrix-studio/capacitor-google-auth
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Configure Keystore & Signing
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Using secure signing keystore from GitHub Secrets (ANDROID_KEYSTORE_BASE64)."
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+          elif [ -f "android/keystore/tubewell-debug.keystore" ]; then
+            echo "Using persistent repository keystore (android/keystore/tubewell-debug.keystore)."
+            cp android/keystore/tubewell-debug.keystore ~/.android/debug.keystore
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 secret provided. Generating development debug keystore..."
+            keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=TubeWell Khata,OU=Agriculture,O=TubeWell Khata,C=PK"
+          fi
+
+          echo "================================================================="
+          echo ">>> SIGNING FINGERPRINTS (ADD TO FIREBASE CONSOLE > YOUR APPS > ANDROID) <<<"
+          keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1:|SHA256:"
+          echo "================================================================="
+
+      - name: Initialize & Sync Capacitor Android Project
+        run: |
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Configure Android GoogleAuth Strings & MainActivity
+        run: |
+          # 1. Extract and inject server_client_id into strings.xml for native Google Sign-In
+          WEB_CLIENT_ID=$(node -p "require('./firebase-applet-config.json').oAuthClientId || '849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com'")
+          echo "Configuring Android server_client_id: $WEB_CLIENT_ID"
+
+          STRINGS_FILE="android/app/src/main/res/values/strings.xml"
+          if [ -f "$STRINGS_FILE" ]; then
+            if grep -q "server_client_id" "$STRINGS_FILE"; then
+              sed -i "s#<string name=\"server_client_id\">.*</string>#<string name=\"server_client_id\">$WEB_CLIENT_ID</string>#" "$STRINGS_FILE"
+            else
+              sed -i "s#</resources>#    <string name=\"server_client_id\">$WEB_CLIENT_ID</string>\n</resources>#" "$STRINGS_FILE"
+            fi
+            echo "Updated server_client_id in $STRINGS_FILE"
+          fi
+
+          # 2. Register GoogleAuth plugin in MainActivity.java
+          MAIN_ACTIVITY="android/app/src/main/java/com/tubewellkhata/app/MainActivity.java"
+          if [ -f "$MAIN_ACTIVITY" ]; then
+            cat << 'EOF' > "$MAIN_ACTIVITY"
+          package com.tubewellkhata.app;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+          import com.codetrixstudio.capacitor.GoogleAuth.GoogleAuth;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  registerPlugin(GoogleAuth.class);
+              }
+          }
+          EOF
+            echo "Updated MainActivity.java with GoogleAuth plugin registration"
+          fi
+
+      - name: Build Android Debug APK
+        working-directory: ./android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TubeWellKhata-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14

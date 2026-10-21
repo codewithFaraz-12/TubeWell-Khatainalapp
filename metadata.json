@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Remix Remix TubeWell Khata",
+  "description": "Professional water irrigation billing application and ledger for tube-well owners and farmers in Pakistan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
