@@ -156,14 +156,44 @@ jobs:
               text=True
           )
 
-          match = re.search(
-              r"Signer #1 certificate SHA-1 digest:\s*([0-9a-fA-F:]+)",
-              output
-          )
-          if not match:
-              raise SystemExit("ERROR: Cannot read real APK certificate")
+          import hashlib, struct
 
-          actual = match.group(1).replace(":", "").lower()
+          data = open(apk, "rb").read()
+          eocd = data.rfind(bytes.fromhex("504b0506"))
+          if eocd < 0:
+              raise SystemExit("ERROR: Invalid APK ZIP")
+
+          cd = struct.unpack_from("<I", data, eocd + 16)[0]
+          if data[cd-16:cd] != b"APK Sig Block 42":
+              raise SystemExit("ERROR: APK signing block missing")
+
+          block_size = struct.unpack_from("<Q", data, cd-24)[0]
+          pos = cd-block_size
+          end_block = cd-24
+
+          def field(buf, offset):
+              n = struct.unpack_from("<I", buf, offset)[0]
+              return buf[offset+4:offset+4+n], offset+4+n
+
+          cert = None
+          while pos < end_block:
+              n = struct.unpack_from("<Q", data, pos)[0]
+              kind = struct.unpack_from("<I", data, pos+8)[0]
+              value = data[pos+12:pos+8+n]
+              if kind == 0x7109871a:
+                  signers, _ = field(value, 0)
+                  signer, _ = field(signers, 0)
+                  signed_data, _ = field(signer, 0)
+                  _, offset = field(signed_data, 0)
+                  certs, _ = field(signed_data, offset)
+                  cert, _ = field(certs, 0)
+                  break
+              pos += n+8
+
+          if cert is None:
+              raise SystemExit("ERROR: APK v2 certificate missing")
+
+          actual = hashlib.sha1(cert).hexdigest()
 
           key_output = subprocess.check_output([
               "keytool", "-list", "-v",
