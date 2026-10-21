@@ -113,11 +113,90 @@ jobs:
               print('Bundled Android OAuth certificate matches APK signing SHA-1.')
           PYSHA
 
+      - name: Force APK to use Firebase-registered signing key
+        run: |
+          cat >> android/app/build.gradle <<'GRADLESIGN'
+          android {
+              signingConfigs {
+                  debug {
+                      storeFile file(System.getProperty('user.home') + '/.android/debug.keystore')
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                  }
+              }
+              buildTypes {
+                  debug {
+                      signingConfig signingConfigs.debug
+                  }
+              }
+          }
+          GRADLESIGN
+
       - name: Build debug APK
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug --stacktrace
+
+      - name: Verify REAL APK signing certificate
+        run: |
+          python3 - <<'PYSIGN'
+          import glob, json, os, re, subprocess
+
+          tools = glob.glob(os.path.join(
+              os.environ["ANDROID_HOME"], "build-tools", "*", "apksigner"
+          ))
+          if not tools:
+              raise SystemExit("ERROR: apksigner not found")
+
+          apk = "android/app/build/outputs/apk/debug/app-debug.apk"
+          output = subprocess.check_output(
+              [sorted(tools)[-1], "verify", "--print-certs", apk],
+              text=True
+          )
+
+          match = re.search(
+              r"Signer #1 certificate SHA-1 digest:\s*([0-9a-fA-F:]+)",
+              output
+          )
+          if not match:
+              raise SystemExit("ERROR: Cannot read real APK certificate")
+
+          actual = match.group(1).replace(":", "").lower()
+
+          key_output = subprocess.check_output([
+              "keytool", "-list", "-v",
+              "-keystore", os.path.expanduser("~/.android/debug.keystore"),
+              "-storepass", "android",
+              "-alias", "androiddebugkey",
+              "-keypass", "android"
+          ], text=True)
+
+          expected_match = re.search(
+              r"SHA1:\s*([0-9A-Fa-f:]+)", key_output
+          )
+          if not expected_match:
+              raise SystemExit("ERROR: Cannot read configured key")
+
+          expected = expected_match.group(1).replace(":", "").lower()
+
+          config = json.load(open("config/google-services.json"))
+          registered = {
+              x.get("android_info", {}).get("certificate_hash", "").lower()
+              for c in config["client"]
+              for x in c.get("oauth_client", [])
+              if x.get("client_type") == 1
+          }
+
+          print("Actual APK SHA-1:", actual)
+          print("Expected key SHA-1:", expected)
+
+          if actual != expected or actual not in registered:
+              raise SystemExit("ERROR: APK signing mismatch! Build rejected.")
+
+          print("SUCCESS: Real APK signature matches Firebase!")
+          PYSIGN
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
