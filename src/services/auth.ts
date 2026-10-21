@@ -43,7 +43,7 @@ export const ensureGoogleAuthInitialized = async (): Promise<void> => {
     await GoogleAuth.initialize({
       clientId: WEB_CLIENT_ID,
       scopes: SCOPES,
-      grantOfflineAccess: true,
+      grantOfflineAccess: false,
     });
     googleAuthInitialized = true;
   } catch (err) {

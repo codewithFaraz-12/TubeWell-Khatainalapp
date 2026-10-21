@@ -38,7 +38,7 @@ const config: CapacitorConfig = {
       ],
       clientId: '849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com',
       serverClientId: '849806943027-f0du4l077ucpi05jrbi031t18c0ac56j.apps.googleusercontent.com',
-      forceCodeForRefreshToken: true,
+      forceCodeForRefreshToken: false,
     },
   },
 };
